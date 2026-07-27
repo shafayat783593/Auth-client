@@ -1,0 +1,83 @@
+
+import { NextRequest, NextResponse } from "next/server";
+import { jwtUtils } from "./utils/jwt";
+import { cookies } from "next/headers";
+import { JwtPayload } from "jsonwebtoken";
+import { getAccessToken } from "./service/getAccessToken";
+import { getNewAccessToken } from "./service/getNewAccessToken";
+
+const AUTH_ROUTES = ["/login", "/register", "/forgot-password", "/reset-password",];
+const PUBLIC_ROUTES = ["/", "/news", "/login", "/register",];
+
+export const proxy = async (request: NextRequest) => {
+    const pathname = request.nextUrl.pathname;
+    let accessToken = request.cookies.get("accessToken")?.value;
+    const refreshToken = request.cookies.get("refreshToken")?.value;
+
+    let decodedAccesstoken = accessToken ? jwtUtils.verifyToken(accessToken, process.env.JWT_ACCESS_SECRET as string) : null;
+    const decodedRefreshtoken = refreshToken ? jwtUtils.verifyToken(refreshToken, process.env.JWT_REFRESH_SECRET as string) : null;
+    console.log(decodedAccesstoken, "decodedAccessToken................................")
+    console.log(decodedRefreshtoken,"decodedRefreshToken................................")
+    const response = NextResponse.next();
+console.log(response.cookies)
+    if (!decodedAccesstoken?.success && decodedRefreshtoken?.success) {
+        const result = await getAccessToken();
+
+        if (result.success && result.data?.accessToken) {
+            const newAccessToken: string = result.data.accessToken; // explicit annotation forces narrowing
+
+            response.cookies.set("accessToken", newAccessToken, {
+                httpOnly: true,
+                maxAge: 60 * 60 * 24,
+                sameSite: "lax",
+            });
+
+            accessToken = newAccessToken;
+            decodedAccesstoken = jwtUtils.verifyToken(newAccessToken, process.env.JWT_ACCESS_SECRET as string);
+        }
+    }
+
+    let role = null;
+    if (decodedAccesstoken?.success && decodedAccesstoken?.data) {
+        role = (decodedAccesstoken.data as JwtPayload).role;
+    }
+
+    if (!decodedAccesstoken?.success) {
+        response.cookies.delete("accessToken");
+    }
+
+    const isPublishRoute = PUBLIC_ROUTES.some((route) => pathname === route || pathname.startsWith(route + "/"));
+
+    if (!accessToken && !isPublishRoute) {
+        const loginUrl = new URL("/login", request.url);
+        loginUrl.searchParams.set("redirectTo", pathname);
+        return NextResponse.redirect(loginUrl);
+    }
+
+    if (accessToken && AUTH_ROUTES.includes(pathname)) {
+        if (role === "customer") return NextResponse.redirect(new URL("/customer", request.url));
+        if (role === "ADMIN") return NextResponse.redirect(new URL("/admin", request.url));
+        if (role === "TECHNICION") return NextResponse.redirect(new URL("/technician", request.url));
+    }
+
+    return response;
+};
+
+
+export const config = {
+    matcher: [
+        "/((?!api|_next/static|_next/image|.*\\.png$).*)",
+    ],
+};
+
+
+
+
+
+
+
+
+
+
+
+
